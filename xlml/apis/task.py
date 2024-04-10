@@ -23,7 +23,8 @@ import airflow
 from airflow.models.taskmixin import DAGNode
 from airflow.utils.task_group import TaskGroup
 from xlml.apis import gcp_config, metric_config, test_config
-from xlml.utils import gpu, metric, name_format, ssh, tpu, xpk, gke
+from xlml.utils import gpu, metric, name_format, ssh, tpu, xpk, gke, xlml_ray
+from airflow.operators.bash import BashOperator
 
 
 class BaseTask(abc.ABC):
@@ -37,6 +38,52 @@ class BaseTask(abc.ABC):
       A DAG node that executes this test.
     """
     ...
+
+
+@dataclasses.dataclass
+class RayTask(BaseTask):
+
+  def run(self) -> DAGNode:
+    with TaskGroup(group_id="ray_quick_test") as group:
+      config_file = "/home/airflow/gcs/dags/dags/mlperf/configs/template.yml"
+      work_dir = "/home/airflow/gcs/dags/dags/mlperf"
+      script_file = "test.py"
+
+      provision = BashOperator(
+          task_id="initialize_ray",
+          bash_command=f"ray up {config_file}",
+      )
+
+      run_model = BashOperator(
+          task_id="run_script",
+          bash_command=(
+              "export RAY_ADDRESS=http://127.0.0.1:8265 &&"
+              f" ray job submit --working-dir {work_dir} python {script_file}"
+          ),
+      )
+
+      # provision = xlml_ray.initialize.override(retries=0)(
+      #     "/home/airflow/gcs/dags/dags/mlperf/configs/minimal.yml"
+      # )
+
+      # run_model = xlml_ray.run.override(retries=0)(
+      #     "/home/airflow/gcs/dags/dags/mlperf", "test.py"
+      # )
+      provision >> run_model
+      return group
+
+  def provision(self) -> None:
+    return
+
+  def run_model(self) -> None:
+    return
+
+  def post_process(self) -> None:
+    return
+
+  def clean_up(self) -> None:
+    # Tear down ray cluster
+    return
 
 
 @dataclasses.dataclass

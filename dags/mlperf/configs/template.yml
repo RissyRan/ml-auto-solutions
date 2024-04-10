@@ -1,0 +1,116 @@
+cluster_name: ranran-ray-maxtext-us-central2
+
+max_workers: 1
+
+docker:
+    #image: gcr.io/tpu-prod-env-multipod/patflick-mlperf-gpt3:latest
+    #image: gcr.io/tpu-prod-env-multipod/lizhiyu-maxtext_base_image-2024_02_04:latest-ray
+    #image: gcr.io/tpu-prod-env-multipod/patflick-maxtext-ray:latest-ray
+    image: gcr.io/tpu-prod-env-multipod/patflick-maxtext-ray:zhiyu-2024-02-11_ray
+    container_name: "maxtext-ray-head"
+    pull_before_run: True
+    run_options:  # Extra options to pass into "docker run"
+      - --ulimit nofile=65536:65536
+      - --log-driver=gcplogs
+      # increase healthcheck timeouts for large clusters
+      - --env RAY_health_check_initial_delay_ms=30000
+      - --env RAY_health_check_period_ms=10000
+      - --env RAY_health_check_timeout_ms=3000
+
+available_node_types:
+    ray_head_default:
+        min_workers: 0
+        max_workers: 0
+        resources: {"CPU": 0}
+        node_config:
+            machineType: n2-standard-32
+            disks:
+              - boot: true
+                autoDelete: true
+                type: PERSISTENT
+                initializeParams:
+                  diskSizeGb: 50
+                  sourceImage: projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts
+            serviceAccounts:
+            #- email: ray-autoscaler-sa-v1@tpu-burn-in-prod-env-multipod.iam.gserviceaccount.com
+            - email: 24860729792-compute@developer.gserviceaccount.com
+              scopes:
+              - https://www.googleapis.com/auth/cloud-platform
+            networkInterfaces:
+              # hard-code the `default` network
+              - kind: compute#networkInterface
+                subnetwork: https://www.googleapis.com/compute/v1/projects/cloud-ml-auto-solutions/regions/us-central2/subnetworks/default
+                accessConfigs:
+                  - kind: compute#accessConfig
+                    networkTier: STANDARD
+                    name: "External NAT"
+                    type: "ONE_TO_ONE_NAT"
+    ray_cpu_worker:
+        min_workers: 1
+        max_workers: 2
+        resources: {"CPU": 2, "CPU-only-worker": 1}
+        node_config:
+            machineType: n2-standard-2
+            disks:
+              - boot: true
+                autoDelete: true
+                type: PERSISTENT
+                initializeParams:
+                  diskSizeGb: 50
+                  sourceImage: projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts
+            serviceAccounts:
+              #- email: ray-autoscaler-sa-v1@tpu-burn-in-prod-env-multipod.iam.gserviceaccount.com
+            - email: 24860729792-compute@developer.gserviceaccount.com
+              scopes:
+              - https://www.googleapis.com/auth/cloud-platform
+            networkInterfaces:
+              # hard-code the `default` network
+              - kind: compute#networkInterface
+                subnetwork: https://www.googleapis.com/compute/v1/projects/cloud-ml-auto-solutions/regions/us-central2/subnetworks/default
+                #aliasIpRanges: []
+                #accessConfigs":
+                #  - name: "External NAT"
+                #    type: "ONE_TO_ONE_NAT"
+    #tpu:
+    #    min_workers: 0
+    #    max_workers: 1
+    #    docker:
+    #        worker_run_options: ["--privileged"]
+    #    resources: {"TPU": 4}
+    #    node_config:
+    #        acceleratorType: v4-16
+    #        runtimeVersion: tpu-ubuntu2204-base
+
+# provider:
+#     type: gcp
+#     region: us-central2
+#     availability_zone: us-central2-b
+#     project_id: cloud-ml-auto-solutions
+provider:
+  type: gcp
+  region: us-central2
+  availability_zone: us-central2-b
+  project_id: cloud-ml-auto-solutions
+
+
+initialization_commands:
+  # Don't stall on ubuntu graphic...
+  - sudo sed -i 's/#$nrconf{restart} = '"'"'i'"'"';/$nrconf{restart} = '"'"'a'"'"';/g' /etc/needrestart/needrestart.conf
+  # Installs Docker if it doesn't exist
+  - >
+    if ! command -v docker &> /dev/null; then
+      sudo apt-get update;
+      curl -fsSL https://get.docker.com -o get-docker.sh;
+      sudo sh get-docker.sh;
+    else
+      echo "Docker is already installed.";
+    fi
+  # Sets Docker permissions
+  - sudo usermod -aG docker $USER
+  - sudo systemctl restart docker -f
+  # Provides auth + access to GCR
+  - curl -fsSL "https://github.com/GoogleCloudPlatform/docker-credential-gcr/releases/download/v2.1.10/docker-credential-gcr_linux_amd64-2.1.10.tar.gz" | tar xz docker-credential-gcr && chmod +x docker-credential-gcr && sudo mv docker-credential-gcr /usr/bin/
+  - docker-credential-gcr configure-docker
+
+# Specify the node type of the head node (as configured above).
+head_node_type: ray_head_default
